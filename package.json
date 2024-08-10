@@ -71,11 +71,12 @@
     "coverageDirectory": "../coverage",
     "testEnvironment": "node"
   },
-  "config": {
+ "config": {
     "commitizen": {
       "path": "./node_modules/cz-conventional-changelog"
     }
-  },"lint-staged": {
+  },
+  "lint-staged": {
     "*.{ts,tsx,js,jsx}": [
       "npm run lint -- --fix"
     ]
