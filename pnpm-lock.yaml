@@ -35,7 +35,7 @@ dependencies:
 
 devDependencies:
   '@nestjs/cli':
-    specifier: ^10.0.0
+    specifier: ^10.4.4
     version: 10.4.4
   '@nestjs/schematics':
     specifier: ^10.0.0
