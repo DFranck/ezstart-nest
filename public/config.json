@@ -1,16 +1,16 @@
 {
-  "startConfig": {
+  "currentConfig": {
     "database": ["local", "mongodb", "postegres"]
   },
   "customConfig": {
     "mongodb": {
-      "url": "MONGO_DATABASE_URL"
+      "uri": "MONGO_DATABASE_URL"
     },
     "postegres": {
-      "url": "POSTGRES_DATABASE_URL"
+      "uri": "POSTGRES_DATABASE_URL"
     },
     "local": {
-      "url": "LOCAL_DATABASE_URL"
+      "uri": "LOCAL_DATABASE_URL"
     }
   }
 }

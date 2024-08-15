@@ -13,6 +13,12 @@ export class ConfigService {
     );
     const configFile = fs.readFileSync(configPathFile, 'utf8');
     const config = JSON.parse(configFile);
-    return config.startConfig.database;
+    const startConfig = config.currentConfig.database.map((db) => {
+      return {
+        type: db,
+        uri: config.customConfig[db].uri,
+      };
+    });
+    return startConfig;
   }
 }
