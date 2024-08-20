@@ -1,73 +1,150 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="200" alt="Nest Logo" /></a>
-</p>
+# Evento-Backend Express.js Project
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+## Introduction
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://coveralls.io/github/nestjs/nest?branch=master" target="_blank"><img src="https://coveralls.io/repos/github/nestjs/nest/badge.svg?branch=master#9" alt="Coverage" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+Welcome to the Evento Backend project. This project serves as the backend for the Evento application, built with Express.js. It provides API endpoints and handles server-side logic for the application.
 
-## Description
+## Project Structure
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+- **backend**: Contains the Express.js application.
+
+## Prerequisites
+
+- Node.js version 14.x or higher
+- PNPM
 
 ## Installation
 
-```bash
-$ pnpm install
-```
+1. **Clone the repository**:
 
-## Running the app
+   ```sh
+   git clone https://github.com/EventoOrganization/evento_backend
+   cd evento_backend
+   ```
 
-```bash
-# development
-$ pnpm run start
+2. **Install dependencies**:
 
-# watch mode
-$ pnpm run start:dev
+   ```sh
+   pnpm install
+   ```
 
-# production mode
-$ pnpm run start:prod
-```
+3. **Create a `.env` file**:
 
-## Test
+   ```sh
+   cp .env.example .env
+   ```
 
-```bash
-# unit tests
-$ pnpm run test
+## Usage
 
-# e2e tests
-$ pnpm run test:e2e
+1. **Start the development server**:
 
-# test coverage
-$ pnpm run test:cov
-```
+   ```sh
+   npm run start
+   ```
 
-## Support
+2. **The server should now be running on http://localhost:8747**:
 
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
+## Migrations
 
-## Stay in touch
+We use `migrate-mongo` for database migrations. Follow these steps to run and manage migrations.
 
-- Author - [Kamil Myśliwiec](https://kamilmysliwiec.com)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
+### Initial Setup
+
+1. **Install migrate-mongo**:
+   ```sh
+   npm install -g migrate-mongo
+
+2. **Initialize migrate-mongo**:
+   ```sh
+   migrate-mongo init
+   
+3. **Configure migrate-mongo**:
+   Update `migrate-mongo-config.js` with your MongoDB connection details.
+
+### Running Migrations
+
+1. **Create a new migration**:
+   ```sh
+   migrate-mongo create <migration-name>
+2. **Apply migrations**:
+   ```sh
+   migrate-mongo up
+3. **Rollback migrations**:
+   ```sh
+   migrate-mongo down
+
+For more details, refer to the [migrate-mongo documentation](https://github.com/seppevs/migrate-mongo)
+
+## Examples
+
+We have included some examples to help you get started with dependencies.
+
+- [Zod_example](https://github.com/EventoOrganization/evento_web/tree/main/examples/zod-example.ts)
+- [jest_example](https://github.com/EventoOrganization/evento_web/tree/main/examples/jest-example.ts)
+- [commitizen_example](https://github.com/EventoOrganization/evento_web/tree/main/examples/commitizen-example.md)
+
+## Project Goals
+
+- Provide a robust backend for the Evento application.
+- Handle user authentication and management.
+- Manage event creation and real-time messaging.
+- Ensure a secure and scalable architecture.
+
+## Key Features
+
+- User authentication and management.
+- Event creation and management.
+- Real-time messaging with Socket.io.
+- API endpoints for frontend integration.
+- Add More...
+
+## Directory Structure
+
+- routes: Defines API routes.
+- models: Mongoose models for MongoDB.
+- controllers: Logic for handling requests.
+- config: Configuration files (database connection).
+- socket: Socket.io configuration and handlers.
+
+## Contributing
+
+Please refer to [Contributing](CONTRIBUTING.md) for guidelines on contributing to this project.
+
+## Branching and Pull Request Policy
+
+- Branching: Create a new branch for each feature or bug fix. Name your branch using the format `feature/your-feature-name` or `bugfix/your-bugfix-name`.
+- Pull Requests: Once your changes are ready, create a Pull Request (PR) to merge your branch into the main branch.
+- Review and Approval: Only the repository owner can approve and merge Pull Requests. Ensure your PR is clear and provides enough context for the review.
+
+## Code Quality Configuration
+
+### Configuration Files
+
+1. **.editorconfig**: Ensures coding style consistency across different text editors.
+2. **.eslintrc.js**: Configures ESLint to analyze and fix code issues.
+3. **.eslintignore**: Specifies files and directories to be ignored by ESLint.
+4. **.prettierrc**: Configures Prettier to format the code.
+5. **commitlint.config.js**: Configures commitlint to validate commit messages.
+6. **lint-staged.config.js**: Configures lint-staged to run ESLint and Prettier on modified files before committing.
+7. **.gitignore**: Specifies files and directories to be ignored by Git.
+
+### Issue Models
+
+We have provided templates to help you report bugs and request new features.
+
+- [bug_report](.github/ISSUE_TEMPLATE/bug_report.md)
+- [feature_request](.github/ISSUE_TEMPLATE/feature_request.md)
 
 ## License
 
-Nest is [MIT licensed](LICENSE).
+This project is licensed under the MIT License. See the LICENSE file for details.
+
+## Contact
+
+For any questions or concerns, please open an issue or contact the project maintainers.
+
+## Useful Links
+
+- Express.js Documentation (https://expressjs.com/en/)
+- Mongoose Documentation (https://mongoosejs.com/docs/)
+- PNPM Documentation (https://pnpm.io/)
