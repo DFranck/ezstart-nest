@@ -12,7 +12,10 @@ module.exports = {
     if (authHeader) {
       const token = authHeader.split(" ")[1];
       jwt.verify(token, JWT_SECRET_KEY, async (err, user) => {
+        console.log("token", token);
         if (err) {
+          console.log(err);
+
           return res.status(403).json({
             success: false,
             code: 403,
@@ -24,7 +27,6 @@ module.exports = {
           loginTime: user.data.loginTime,
           role: "user",
         });
-
         if (!existingUser) {
           return res.status(403).json({
             success: false,

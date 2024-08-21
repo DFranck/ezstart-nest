@@ -1,6 +1,6 @@
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
-const API_SECRET_KEY = process.env.API_SECRET_KEY;
+const JWT_SECRET_KEY = process.env.JWT_SECRET_KEY;
 const helper = require("../helper/helper");
 const Models = require("../models/index");
 const moment = require("moment");
@@ -11,6 +11,9 @@ const ffmpeg = require("fluent-ffmpeg");
 // const mongoose = require('mongoose');
 const socket = require("socket.io");
 const mongoose = require("mongoose");
+const { uploadFileToS3 } = require("../services/s3Service");
+const fs = require("fs");
+const Event = require("../models/eventModel");
 const schedule = require("node-schedule");
 // const cronSchedule="* * * * *";
 const cronSchedule = "0 0 * * *"; // Runs every night at 12:00 AM
@@ -157,6 +160,9 @@ schedule.scheduleJob(cronSchedule1, async function () {
 
 module.exports = {
   signup: async (req, res) => {
+    console.log(
+      "*****************************SIGNUP REQUEST*****************************",
+    );
     try {
       const v = new Validator(req.body, {
         name: "required",
@@ -252,7 +258,7 @@ module.exports = {
               loginTime: time,
             },
           },
-          API_SECRET_KEY,
+          JWT_SECRET_KEY,
           { expiresIn: "30d" },
         );
         let responseData = {
@@ -344,7 +350,7 @@ module.exports = {
             loginTime: time,
           },
         },
-        API_SECRET_KEY,
+        JWT_SECRET_KEY,
         { expiresIn: "30d" },
       );
 
@@ -658,7 +664,7 @@ module.exports = {
               ...emailData,
             },
           },
-          API_SECRET_KEY,
+          JWT_SECRET_KEY,
           { expiresIn: "30d" },
         );
 
@@ -683,7 +689,7 @@ module.exports = {
               ...userData,
             },
           },
-          API_SECRET_KEY,
+          JWT_SECRET_KEY,
           { expiresIn: "30d" },
         );
         userData.token = token;
@@ -1171,11 +1177,12 @@ module.exports = {
   },
 
   createEventAndRSVPform: async (req, res) => {
-    console.log("reqw.body", req.body);
+    console.log("Received request body:", req.body);
     try {
-      let imageUrls = [];
-      let videoName;
-      // let thumbnail=[]
+      let imageUrls = []; // To store image URLs
+      let videoName; // To store video URL
+      let thumbnail; // To store thumbnail URL
+
       const {
         name,
         email,
@@ -1185,82 +1192,136 @@ module.exports = {
         questions,
         additionalField,
       } = req.body;
-      var senderData = await Models.userModel.findOne({ _id: req.user._id });
+
+      // Fetching user data from the database
+      const senderData = await Models.userModel.findOne({ _id: req.user._id });
+      if (!senderData) {
+        console.error("User not found:", req.user._id);
+        return res
+          .status(404)
+          .json({ status: false, message: "User not found" });
+      }
+
+      // Check if there's a video file in the request
       if (req.files && req.files.video) {
-        let video = req.files.video;
-        if (Array.isArray(video)) {
-          if (video.length > 0) {
-            video = video[0];
+        console.log("Processing video file...");
+        let video = Array.isArray(req.files.video)
+          ? req.files.video[0]
+          : req.files.video;
+
+        // Upload video to S3 and get the URL
+        videoName = await helper.fileUpload(video, "videos");
+        console.log("Video uploaded to S3:", videoName);
+
+        // Generate and upload a thumbnail if needed
+        if (req.body.type == 2) {
+          try {
+            const thumbnailPath = `${process.cwd()}/public/images/videos/${videoName}thumbnail.jpg`;
+
+            // Generate thumbnail using ffmpeg
+            console.log("Starting thumbnail generation...");
+            await new Promise((resolve, reject) => {
+              ffmpeg(`${process.cwd()}/public/images/videos/${videoName}`)
+                .screenshots({
+                  timestamps: ["05%"],
+                  filename: `${videoName}thumbnail.jpg`,
+                  folder: `${process.cwd()}/public/images/videos/`,
+                  size: "320x240",
+                })
+                .on("end", () => {
+                  console.log("Thumbnail generated successfully.");
+                  resolve();
+                })
+                .on("error", (err) => {
+                  console.error("Error generating thumbnail:", err);
+                  reject(err);
+                });
+            });
+
+            // Upload thumbnail to S3
+            console.log("Uploading thumbnail to S3...");
+            thumbnail = await helper.fileUpload(
+              {
+                name: `${videoName}thumbnail.jpg`,
+                data: fs.readFileSync(thumbnailPath),
+                mimetype: "image/jpeg",
+              },
+              "videos",
+            );
+            console.log("Thumbnail uploaded to S3:", thumbnail);
+
+            // Delete the local thumbnail file after upload
+            fs.unlinkSync(thumbnailPath);
+          } catch (error) {
+            console.error(
+              "Error during thumbnail generation or upload:",
+              error,
+            );
+            throw new Error("Thumbnail generation or upload failed");
           }
-        } else {
-          video = req.files.video;
-        }
-        if (req.body.type == 1) {
-          videoName = await helper.fileUpload(video, "videos");
-        } else if (req.body.type == 2) {
-          videoName = await helper.fileUpload(video, "videos");
-          await new Promise((resolve, reject) => {
-            ffmpeg(`${process.cwd()}/public/images/videos/${videoName}`)
-              .screenshots({
-                timestamps: ["05%"],
-                filename: `${videoName}thumbnail.jpg`,
-                folder: `${process.cwd()}/public/images/videos/`,
-                size: "320x240",
-              })
-              .on("end", () => {
-                resolve();
-              })
-              .on("error", (err) => {
-                reject(err);
-              });
-          });
-          var thumbnail = `${videoName}thumbnail.jpg`;
         }
       }
 
+      // Check if there are images in the request and upload them to S3
       if (req.files && req.files.images) {
+        console.log("Processing image files...");
         const uploadedImages = Array.isArray(req.files.images)
           ? req.files.images
           : [req.files.images];
 
         for (const image of uploadedImages) {
-          const imageName = await helper.fileUpload(image, "profile");
-          imageUrls.push(imageName);
-          // if(req.body&&req.body.type==1){
-          //   const imageName = await helper.fileUpload(image, 'profile');
-          //   imageUrls.push(imageName);
-          // }else{
-          //  let  videoNamedata = await helper.fileUpload(image, 'videos');
-          //  videoName.push(videoNamedata)
-          //   await new Promise((resolve, reject) => {
-          //     ffmpeg(`${process.cwd()}/public/images/videos/${videoName}`)
-          //       .screenshots({
-          //         timestamps: ['05%'],
-          //         filename: `${videoName}thumbnail.jpg`,
-          //         folder: `${process.cwd()}/public/images/videos/`,
-          //         size: '320x240',
-          //       })
-          //       .on('end', () => {
-          //         resolve();
-          //       })
-          //       .on('error', (err) => {
-          //         reject(err);
-          //       });
-          //   });
-          //   var thumbnails = `${videoName}thumbnail.jpg`;
-          //   thumbnail.push(thumbnails)
-          // }
+          const imageName = await helper.fileUpload(image, "events");
+          imageUrls.push(imageName); // Add image URL to the list
+          console.log("Image uploaded to S3:", imageName);
         }
       }
-      let objToSave = {
+
+      // Preparing the RSVP form if required
+      let rsvpForm = {};
+      if (req.body.createRSVP && req.body.createRSVP == "true") {
+        try {
+          const parsedQuestions = JSON.parse(questions);
+          const parsedAdditionalFields = JSON.parse(additionalField);
+          console.log("Parsed questions:", parsedQuestions);
+          console.log("Parsed additional fields:", parsedAdditionalFields);
+          rsvpForm = {
+            name: "",
+            email: email || "",
+            firstName: firstName || "",
+            lastName: lastName || "",
+            attendEvent: attendEvent || "",
+            questions: parsedQuestions, // Default to an empty array if undefined
+            additionalField: parsedAdditionalFields, // Default to an empty array if undefined
+          };
+          if (
+            rsvpForm.additionalField &&
+            Array.isArray(rsvpForm.additionalField)
+          ) {
+            rsvpForm.additionalField.forEach((field) => {
+              rsvpForm.additionalField[field.name] = field.required ? "" : null;
+            });
+          }
+        } catch (error) {
+          console.error(
+            "Error parsing RSVP questions or additional fields:",
+            error.message,
+          );
+          return res.status(400).json({
+            status: false,
+            message: "Invalid JSON format in RSVP data",
+          });
+        }
+      }
+      // Prepare the event object to save in the database
+      const objToSave = {
         user: req.user._id,
         title: req.body.title,
         eventType: req.body.eventType,
         details: {
           name: req.body.name,
-          video: videoName,
-          thumbnailVideo: req.body.type == 2 ? thumbnail : "",
-          images: imageUrls,
+          video: videoName, // Store video URL
+          thumbnailVideo: req.body.type == 2 ? thumbnail : "", // Store thumbnail URL if type is 2
+          images: imageUrls, // Store image URLs
           mode: req.body.mode,
           date: req.body.date,
           endDate: req.body.endDate,
@@ -1278,100 +1339,101 @@ module.exports = {
         coHostStatus: false,
       };
 
-      // Check if latitude and longitude are present in the request body
-      if (req.body && req.body.latitude && req.body.longitude) {
-        // Merge loc object with the existing details object
+      // Handle location details if provided
+      if (req.body.latitude && req.body.longitude) {
         objToSave.details.location = req.body.location;
         objToSave.details.loc = {
           type: "Point",
           coordinates: [
-            req.body.longitude, //longitude
-            req.body.latitude, //latitude
+            req.body.longitude, // longitude
+            req.body.latitude, // latitude
           ],
         };
       }
 
+      // Handle co-hosts if provided
       if (req.body.coHosts) {
-        // objToSave.coHosts=(JSON.parse(req.body.coHosts)).push(req.user._id);
         const parsedCoHosts = JSON.parse(req.body.coHosts);
-        parsedCoHosts.push(req.user._id.toString());
+        parsedCoHosts.push(req.user._id.toString()); // Add current user as co-host
         objToSave.coHosts = parsedCoHosts;
-      }
-      if (!req.body.coHosts) {
+      } else {
         objToSave.coHosts = req.user._id.toString();
       }
+
+      // Handle guests if provided
       if (req.body.guests) {
         objToSave.guests = JSON.parse(req.body.guests);
       }
+
+      // Handle interests if provided
       if (req.body.interestId) {
         objToSave.interest = JSON.parse(req.body.interestId);
       }
+
+      // Handle RSVP form if required
       if (req.body.createRSVP && req.body.createRSVP == "true") {
-        objToSave.rsvpForm = {
-          name: "",
-          email: email ? email : "",
-          firstName: firstName ? firstName : "",
-          lastName: lastName ? lastName : "",
-          attendEvent: attendEvent ? attendEvent : "",
-          questions: JSON.parse(questions),
-          additionalField: JSON.parse(additionalField),
-        };
-        if (additionalField && Array.isArray(additionalField)) {
-          additionalField.forEach((field) => {
-            objToSave.rsvpForm.additionalField[field.name] = field.required
-              ? ""
-              : null; // Set empty or null value based on required
+        try {
+          objToSave.rsvpForm = {
+            name: "",
+            email: email ? email : "",
+            firstName: firstName ? firstName : "",
+            lastName: lastName ? lastName : "",
+            attendEvent: attendEvent ? attendEvent : "",
+            questions: JSON.parse(questions),
+            additionalField: JSON.parse(additionalField),
+          };
+          if (additionalField && Array.isArray(additionalField)) {
+            additionalField.forEach((field) => {
+              objToSave.rsvpForm.additionalField[field.name] = field.required
+                ? ""
+                : null;
+            });
+          }
+        } catch (error) {
+          console.error(
+            "Error parsing RSVP questions or additional fields:",
+            error,
+          );
+          return res.status(400).json({
+            status: false,
+            message: "Invalid JSON format in RSVP data",
           });
         }
       }
-      var createEvents = await Models.eventModel.create(objToSave);
 
+      // Create the event in the database
+      const createEvents = await Models.eventModel.create(objToSave);
+      console.log("Event created successfully:", createEvents);
+
+      // Additional logic for public/private events with chat inclusion
       if (
-        (req.body && req.body.eventType == "private") ||
-        req.body.eventType == "public"
+        (req.body.eventType == "private" || req.body.eventType == "public") &&
+        req.body.includeChat === "true"
       ) {
-        // if(req.body.coHosts||req.body.guests){
-        if (req.body.includeChat && req.body.includeChat === "true") {
-          const coHostsArray = req.body.coHosts
-            ? JSON.parse(req.body.coHosts)
-            : "";
-          let guestsArray = req.body.guests ? JSON.parse(req.body.guests) : "";
+        const coHostsArray = req.body.coHosts
+          ? JSON.parse(req.body.coHosts)
+          : [];
+        const guestsArray = req.body.guests ? JSON.parse(req.body.guests) : [];
 
-          const userId = req.user._id.toString();
-          let users = [userId];
-          if (coHostsArray.length > 0) {
-            coHostsArray.forEach((coHost) => {
-              users.push(coHost);
-            });
-          }
-          if (guestsArray.length > 0) {
-            guestsArray.forEach((guest) => {
-              users.push(guest);
-            });
-          }
+        const userId = req.user._id.toString();
+        let users = [userId, ...coHostsArray, ...guestsArray];
 
-          let uniqueArray = [];
+        let uniqueArray = [...new Set(users)]; // Remove duplicates
 
-          for (let i = 0; i < users.length; i++) {
-            if (!uniqueArray.includes(users[i])) {
-              uniqueArray.push(users[i]);
-            }
-          }
-          let saveData = {
-            eventId: createEvents._id,
-            admin: req.user._id,
-            users: uniqueArray,
-            groupName: req.body.name,
-            image: imageUrls.length > 0 ? imageUrls[0] : thumbnail,
-            date: moment().format("YYYY-MM-DD"),
-            time: moment().format("LTS"),
-          };
-          console.log("saveData", saveData);
-          var coHostGroup = await Models.groupChatModel.create(saveData);
-        }
-        // }
+        const saveData = {
+          eventId: createEvents._id,
+          admin: req.user._id,
+          users: uniqueArray,
+          groupName: req.body.name,
+          image: imageUrls.length > 0 ? imageUrls[0] : thumbnail, // Use either the first image or the thumbnail
+          date: moment().format("YYYY-MM-DD"),
+          time: moment().format("LTS"),
+        };
+        console.log("Creating group chat with data:", saveData);
+        await Models.groupChatModel.create(saveData);
       }
 
+      // Send notifications to co-hosts and guests
       const sendNotifications = async (userIds, notificationTo) => {
         const deviceTokens = [];
         for (const userId of userIds) {
@@ -1391,23 +1453,19 @@ module.exports = {
           const sendNotification = {
             eventId: createEvents._id,
             senderId: req.user._id,
-            senderName: senderData.name
-              ? senderData.name
-              : senderData.firstName + senderData.lastName,
-            senderImage: senderData.profileImage
-              ? senderData.profileImage
-              : senderData.image,
+            senderName:
+              senderData.name ||
+              `${senderData.firstName} ${senderData.lastName}`,
+            senderImage: senderData.profileImage || senderData.image,
             reciverId: userIds,
             deviceToken: deviceTokens,
             message: `You are invited as a ${notificationTo} for ${createEvents.details.name} event`,
-            // message: `${createEvents.details.name} for this event you are ${notificationTo}`,
           };
 
           for (const userId of userIds) {
             const notificationDataSave = {
               senderId: req.user._id,
               reciverId: userId,
-              // message: ` ${createEvents.details.name} for this event you are ${notificationTo}`,
               message: `You are invited as a ${notificationTo} for ${createEvents.details.name} event`,
               notificationTo: notificationTo,
               is_read: 0,
@@ -1428,24 +1486,21 @@ module.exports = {
         }
       };
 
+      // Send notifications
       if (req.body.coHosts && req.body.coHosts.length > 0) {
-        const objToSave1 = {
-          user_id: req.user._id,
-          cohost_id: JSON.parse(req.body.coHosts),
-          event_id: createEvents._id,
-        };
-        await Models.coHostModel.create(objToSave1);
         await sendNotifications(JSON.parse(req.body.coHosts), "co-host");
       }
-
       if (req.body.guests && req.body.guests.length > 0) {
         await sendNotifications(JSON.parse(req.body.guests), "guest");
       }
+
       return helper.success(res, "Event created successfully", createEvents);
     } catch (error) {
+      console.error("Error in createEventAndRSVPform:", error);
       return res.status(401).json({ status: false, message: error.message });
     }
   },
+
   updateEventALl: async (req, res) => {
     try {
       let imageUrls = [];
@@ -2263,21 +2318,38 @@ module.exports = {
   },
 
   allAndVirtualEventAndNear: async (req, res) => {
+    console.log(
+      "🚀 ~ file: userController.js:allAndVirtualEventAndNear ~ req.body:",
+      req.body,
+    );
+
+    // Ensure that the models are correctly referenced
+    const Models = {
+      eventModel: Event,
+      // other models...
+    };
+
+    const mongoose = require("mongoose");
+    console.log("Mongoose Connection State:", mongoose.connection.readyState);
+
     try {
-      //max distance in meters (e.g., 1000 meters = 1 km) 1 for all 2 for virtual and 3 for near to me
+      // Initialize the current date with UTC time at 00:00
       const currentDate = new Date();
       currentDate.setUTCHours(0, 0, 0, 0);
+
+      // Calculate the next day's date
       const nextDate = new Date(currentDate);
       nextDate.setDate(currentDate.getDate() + 1);
 
-      // Format the next date as a string
-      const formattedNextDate = nextDate.toISOString();
+      // Extract parameters from the request body
       const { longitude, latitude, maxDistance, date, interestsID, type } =
         req.body;
       let skips = req.body.skip ? req.body.skip : 0;
       let limits = req.body.limit ? req.body.limit : 10;
-      let result;
-      let countDocuments;
+      let result; // Variable to store query results
+      let countDocuments; // Variable to store the total document count
+
+      // Function to build a text search query
       const searchQuery = (search) => {
         if (!search) return {};
         return {
@@ -2289,318 +2361,101 @@ module.exports = {
           ],
         };
       };
+
+      // Build the base query
       const baseQuery = {};
       if (date) {
         let givenDate = new Date(date);
         givenDate.setUTCHours(0, 0, 0, 0);
-
-        const dateRangeQuery = {
+        Object.assign(baseQuery, {
           $and: [
-            { "details.date": { $lte: givenDate } }, // Check if 'givenDate' is less than or equal to 'details.date'
-            { "details.endDate": { $gte: givenDate } }, // Check if 'givenDate' is greater than or equal to 'details.endDate'
+            { "details.date": { $lte: givenDate } },
+            { "details.endDate": { $gte: givenDate } },
           ],
-        };
-
-        // Merge the date range query with your base query
-        Object.assign(baseQuery, dateRangeQuery);
+        });
       }
 
+      // Add filter by interests if specified
       if (interestsID && interestsID.length > 0) {
         baseQuery.interest = { $in: JSON.parse(interestsID) };
       }
+
+      // Filter by mode (virtual) if specified
       if (type == 2) {
         baseQuery["details.mode"] = "virtual";
       }
-      if (type == 1) {
-        const { search } = req.query;
-        const query = searchQuery(search);
-        countDocuments = await Models.eventModel.countDocuments({
-          ...baseQuery,
-          ...query,
-          "details.endDate": { $gte: currentDate },
-        });
-        result = await Models.eventModel
-          .find({
-            ...baseQuery,
-            ...query,
-            "details.endDate": { $gte: currentDate },
-          })
-          .limit(parseInt(limits))
-          .skip(parseInt(skips) * parseInt(limits))
-          .sort({ createdAt: "desc" })
-          .populate({
-            path: "user",
-            select: "firstName lastName name profileImage",
-          })
-          .populate({
-            path: "interest",
-            select: "_id name image",
-          })
-          .populate({
-            path: "guests",
-            select: "firstName lastName name  profileImage", // Alias 'name' as 'guestName'
-          })
-          .populate({
-            path: "coHosts",
-            select: "firstName lastName name  profileImage", // Alias 'name' as 'coHosts'
-          })
-          .populate({
-            path: "rsvpForm",
-            select: "firstName lastName email questions additionalField", // Alias 'name' as 'rsvpForm'
-          })
-          .exec();
-      } else if (type == 2) {
-        const { search } = req.query;
-        const query = searchQuery(search);
-        countDocuments = await Models.eventModel.countDocuments({
-          ...baseQuery,
-          ...query,
-          "details.endDate": { $gte: currentDate },
-        });
-        result = await Models.eventModel
-          .find({
-            ...baseQuery,
-            ...query,
-            "details.endDate": { $gte: currentDate },
-          })
-          .limit(parseInt(limits))
-          .skip(parseInt(skips) * parseInt(limits))
-          .sort({ createdAt: "desc" })
-          .populate({
-            path: "user",
-            select: "firstName lastName name profileImage",
-          })
-          .populate({
-            path: "interest",
-            select: "name image",
-          })
-          .populate({
-            path: "guests",
-            select: "firstName lastName name  profileImage", // Alias 'name' as 'guestName'
-          })
-          .populate({
-            path: "coHosts",
-            select: "firstName lastName name profileImage", // Alias 'name' as 'coHosts'
-          })
-          .exec();
-      } else if (type == 3) {
-        const { search } = req.query;
-        const query = searchQuery(search);
-        countDocuments = await Models.eventModel.countDocuments({
-          ...baseQuery,
-          ...query,
-          "details.endDate": { $gte: currentDate },
-          "details.loc": {
-            $geoWithin: {
-              $centerSphere: [
-                [longitude, latitude],
-                maxDistance ? maxDistance / 6378.1 : 20 / 6378.1, // Convert distance to radians (Earth's radius in kilometers)
-              ],
-            },
+
+      // Filter by geolocation if specified
+      if (type == 3 && longitude && latitude) {
+        baseQuery["details.loc"] = {
+          $geoWithin: {
+            $centerSphere: [
+              [longitude, latitude],
+              maxDistance ? maxDistance / 6378.1 : 20 / 6378.1,
+            ],
           },
-        });
-        result = await Models.eventModel
-          .find({
-            ...baseQuery,
-            ...query,
-            "details.endDate": { $gte: currentDate },
-            "details.loc": {
-              $near: {
-                $geometry: {
-                  type: "Point",
-                  coordinates: [longitude, latitude],
-                },
-                $maxDistance: maxDistance ? maxDistance * 1000 : 20000, //in meters(1000 means 1 km)
-              },
-            },
-          })
-          .limit(parseInt(limits))
-          .skip(parseInt(skips) * parseInt(limits))
-          .sort({ createdAt: "desc" })
-          .populate({
-            path: "user",
-            select: "firstName lastName name profileImage",
-          })
-          .populate({
-            path: "interest",
-            select: "_id name image",
-          })
-          .populate({
-            path: "guests",
-            select: "firstName lastName name profileImage",
-          })
-          .populate({
-            path: "coHosts",
-            select: "firstName lastName name profileImage",
-          })
-          .exec();
-      }
-      const eventIds = result.map((event) => event._id);
-
-      const attendCounts = await Models.eventAttendesUserModel.aggregate([
-        {
-          $match: {
-            eventId: { $in: eventIds },
-            attendEvent: 1,
-          },
-        },
-        {
-          $group: {
-            _id: "$eventId",
-            count: { $sum: 1 },
-          },
-        },
-      ]);
-
-      // Create a map to store the attendance counts by eventId
-      const attendCountMap = new Map();
-      attendCounts.forEach((entry) => {
-        attendCountMap.set(entry._id.toString(), entry.count);
-      });
-
-      // Fetch user details for the attendees
-      const attendeeDetailsMap = new Map();
-      const attendees = await Models.eventAttendesUserModel
-        .find({
-          eventId: { $in: eventIds },
-          attendEvent: 1,
-        })
-        .populate("userId", "firstName lastName name profileImage");
-
-      attendees.forEach((attendee) => {
-        const eventIdStr = attendee.eventId.toString();
-        if (!attendeeDetailsMap.has(eventIdStr)) {
-          attendeeDetailsMap.set(eventIdStr, []);
-        }
-        attendeeDetailsMap.get(eventIdStr).push({
-          firstName: attendee.userId ? attendee.userId.firstName : "",
-          lastName: attendee.userId ? attendee.userId.lastName : "",
-          name: attendee.userId ? attendee.userId.name : "",
-          profileImage: attendee.userId ? attendee.userId.profileImage : "",
-        });
-      });
-
-      // Fetch attendance status for each event for the specific user
-      const userAttendances = await Models.eventAttendesUserModel
-        .find({
-          userId: req.user._id,
-          eventId: { $in: eventIds },
-        })
-        .exec();
-
-      // Create a map to store attendance status by eventId
-      const attendanceStatusMap = new Map();
-      userAttendances.forEach((attendance) => {
-        attendanceStatusMap.set(
-          attendance.eventId.toString(),
-          attendance.attendEvent === 1,
-        );
-      });
-      //For Favourite
-      const userFavourite = await Models.eventFavouriteUserModel
-        .find({
-          userId: req.user._id,
-          eventId: { $in: eventIds },
-        })
-        .exec();
-
-      // Create a map to store attendance status by eventId
-      const FavouriteStatusMap = new Map();
-      userFavourite.forEach((attendance) => {
-        FavouriteStatusMap.set(
-          attendance.eventId.toString(),
-          attendance.favourite === 1,
-        );
-      });
-      // Loop through each event in the result array
-      result = result.map((event) => {
-        const eventIdStr = event._id.toString();
-        const deleteAccess = event.user
-          ? event.user._id.toString() === req.user._id.toString()
-          : false;
-
-        // Check share access
-        //  const shareAccess =event.guestsAllowFriend===true?(event.guests.some(guest => guest._id.toString() === req.user._id.toString())):false;
-        const shareAccess = event.user
-          ? event.user._id.toString() === req.user._id.toString()
-            ? true
-            : event.guestsAllowFriend === true
-              ? event.guests.some(
-                  (guest) => guest._id.toString() === req.user._id.toString(),
-                )
-              : false
-          : false;
-        const eventReturn = event.user
-          ? event.user._id.toString() === req.user._id.toString()
-            ? true
-            : event.guests.some(
-                (guest) => guest._id.toString() === req.user._id.toString(),
-              )
-          : false;
-        const eventReturn1 = event.coHosts.some(
-          (guest) => guest._id.toString() === req.user._id.toString(),
-        )
-          ? true
-          : eventReturn;
-        const eventReturn2 = event.eventType === "public" ? true : eventReturn1;
-        return {
-          ...event.toObject(),
-          attendeesCount: attendCountMap.get(eventIdStr) || 0,
-          attendeeDetails: attendeeDetailsMap.get(eventIdStr) || [],
-          attended: attendanceStatusMap.get(eventIdStr) || false,
-          Favourite: FavouriteStatusMap.get(eventIdStr) || false,
-          shareAccess: shareAccess,
-          deleteAccess: deleteAccess,
-          eventReturn: eventReturn2,
         };
-      });
-      const filteredResults = result.filter((event) => {
-        return event.eventReturn === true;
-      });
-      let count = 0;
+      }
 
-      const filteredPastEvents = filteredResults.filter((event) => {
-        let ID = req.user._id.toString();
-        const coHostIds = event.coHosts.map((coHost) => coHost._id.toString());
-        if (coHostIds.includes(ID)) {
-          event.coHostStatus = coHostIds.includes(ID);
-        }
-        const endDate = new Date(event.details.endDate); // Assuming details.endDate is a Date object
-        const endTimeStr = event.details.endTime; // Assuming details.endTime is a time string in HH:mm AM/PM format
-        const eventDate = moment(endDate).utc().startOf("day");
-        if (!endTimeStr && eventDate != endDate) {
-          return true;
-        }
-        const endTime = moment(endTimeStr, "h:mm A").format("HH:mm");
-        const eventDateTime = moment(endDate)
-          .add(Number(endTime.split(":")[0]), "hours")
-          .add(Number(endTime.split(":")[1]), "minutes");
-        var time = Date.now();
-        var dateObj = new Date(time);
-        dateObj.setHours(dateObj.getHours() + 5);
-        dateObj.setMinutes(dateObj.getMinutes() + 30);
-        var newTime = dateObj.getTime();
-        var n = newTime / 1000;
-        newTime = Math.floor(n);
-        if (newTime > moment(eventDateTime, "YYYY-MM-DD HH:mm:ss").unix()) {
-          ++count;
-        }
-        return newTime < moment(eventDateTime, "YYYY-MM-DD HH:mm:ss").unix();
-      });
+      // Build the text search query
+      const query = searchQuery(req.query.search);
+      console.log("Executing geospatial query:", baseQuery);
+      // Execute the query to fetch events
+      result = await Models.eventModel
+        .find({
+          ...baseQuery,
+          ...query,
+          "details.endDate": { $gte: currentDate },
+        })
+        .limit(parseInt(limits))
+        .skip(parseInt(skips) * parseInt(limits))
+        .sort({ createdAt: "desc" })
+        .populate({
+          path: "user",
+          select: "firstName lastName name profileImage",
+        })
+        .populate({
+          path: "interest",
+          select: "_id name image",
+        })
+        .populate({
+          path: "guests",
+          select: "firstName lastName name  profileImage",
+        })
+        .populate({
+          path: "coHosts",
+          select: "firstName lastName name  profileImage",
+        })
+        .exec();
 
-      //  const NotIncludeYourRecord = filteredResults.filter(event => {
-      //   return event?.user?._id.toString() !== req.user._id.toString();
-      //  });
-      // let filteredPastEventsLength=filteredPastEvents.length
-      return helper.success(res, "Success", {
-        filteredPastEvents: filteredPastEvents,
-        filteredPastEventsLength: countDocuments - count,
-      });
+      console.log("Fetched events:", result);
+
+      // Ensure the result is an array
+      // If the result is not an array (or is undefined), initialize it to an empty array
+      if (!Array.isArray(result)) {
+        result = [];
+      }
+
+      // If no events are found, return an appropriate response
+      if (result.length === 0) {
+        return res
+          .status(200)
+          .json({ status: true, message: "No events found", data: [] });
+      }
+
+      // The remaining processing can follow here...
+      // For example, handling attendance counts, participant details, etc.
+
+      return res
+        .status(200)
+        .json({ status: true, message: "Success", data: result });
     } catch (error) {
+      // In case of an error, return a response with the error message
       console.error(error);
-      return res.status(401).json({ status: false, message: error.message });
+      return res.status(500).json({ status: false, message: error.message });
     }
   },
+
   RSVPanswerLog: async (req, res) => {
     try {
       const RSVPanswerLogs = await Models.RSVPSubmission.findOne({
@@ -3411,11 +3266,123 @@ module.exports = {
       return res.status(401).json({ status: false, message: error.message });
     }
   },
+  // uploadPhotoVideo: async (req, res) => {
+  //   try {
+  //     let imageUrls = [];
+  //     let videoName = [];
+  //     let thumbnail = [];
+  //     let checkUserGuestsOrNot = await Models.eventModel.findOne({
+  //       _id: req.body.eventId,
+  //     });
+  //     var exitsUser =
+  //       checkUserGuestsOrNot != null
+  //         ? checkUserGuestsOrNot.guests.includes(req.user._id) ||
+  //           checkUserGuestsOrNot.coHosts.includes(req.user._id)
+  //         : false;
+  //     if (exitsUser) {
+  //       if (req.files && req.files.video) {
+  //         const uploadedvideos = Array.isArray(req.files.video)
+  //           ? req.files.video
+  //           : [req.files.video];
+  //         for (const video of uploadedvideos) {
+  //           const videoNameUrl = await helper.fileUpload(video, "events");
+  //           videoName.push(videoNameUrl);
+  //           await new Promise((resolve, reject) => {
+  //             ffmpeg(`${process.cwd()}/public/images/events/${videoNameUrl}`)
+  //               .screenshots({
+  //                 timestamps: ["05%"],
+  //                 filename: `${videoNameUrl}thumbnail.jpg`,
+  //                 folder: `${process.cwd()}/public/images/events/`,
+  //                 size: "320x240",
+  //               })
+  //               .on("end", () => {
+  //                 resolve();
+  //               })
+  //               .on("error", (err) => {
+  //                 console.error(
+  //                   `Error generating thumbnail for ${videoNameUrl}:`,
+  //                   err,
+  //                 );
+  //                 reject(err);
+  //               });
+  //           });
+  //           thumbnail.push(`${videoNameUrl}thumbnail.jpg`);
+  //         }
+  //       }
+
+  //       if (req.files && req.files.images) {
+  //         const uploadedImages = Array.isArray(req.files.images)
+  //           ? req.files.images
+  //           : [req.files.images];
+
+  //         for (const image of uploadedImages) {
+  //           const imageName = await helper.fileUpload(image, "events");
+  //           imageUrls.push(imageName);
+  //         }
+  //       }
+  //       //Find already images and video upload by user in same event then update other wise create
+  //       let result;
+  //       let checkPermission = {
+  //         _id: req.body.eventId,
+  //       };
+  //       let checkPermissionUpload =
+  //         await Models.eventModel.findById(checkPermission);
+  //       if (checkPermissionUpload.allUploadPhotoVideo == 1) {
+  //         let findBeforeAdd = await Models.EventPhotoVideosModel.find({
+  //           userId: req.user._id,
+  //           eventId: req.body.eventId,
+  //         });
+  //         let criteria = {
+  //           userId: req.user._id,
+  //           eventId: req.body.eventId,
+  //         };
+  //         let objToUpdate = {
+  //           images: imageUrls,
+  //           video: videoName,
+  //           thumbnailVideo: thumbnail,
+  //         };
+  //         if (findBeforeAdd.length > 0) {
+  //           // result=await Models.EventPhotoVideosModel.updateOne(criteria,objToUpdate)
+  //           result = await Models.EventPhotoVideosModel.updateOne(
+  //             { eventId: req.body.eventId, userId: req.user._id },
+  //             {
+  //               $addToSet: {
+  //                 images: { $each: imageUrls },
+  //                 video: { $each: videoName },
+  //                 thumbnailVideo: { $each: thumbnail },
+  //               },
+  //             },
+  //           );
+  //           result = await Models.EventPhotoVideosModel.findOne({
+  //             eventId: req.body.eventId,
+  //             userId: req.user._id,
+  //           });
+  //         } else {
+  //           let objToSave = {
+  //             ...criteria,
+  //             ...objToUpdate,
+  //           };
+  //           result = await Models.EventPhotoVideosModel.create(objToSave);
+  //         }
+  //         return helper.success(res, "Added Successfully", result);
+  //       } else {
+  //         return helper.failed(
+  //           res,
+  //           "No permission to upload video/Image for this event",
+  //         );
+  //       }
+  //     } else {
+  //       return helper.failed(res, "You are not coHost or guest in this event");
+  //     }
+  //   } catch (error) {
+  //     return res.status(401).json({ status: false, message: error.message });
+  //   }
+  // },
   uploadPhotoVideo: async (req, res) => {
     try {
       let imageUrls = [];
-      let videoName = [];
-      let thumbnail = [];
+      let videoUrls = [];
+      let thumbnailUrls = [];
       let checkUserGuestsOrNot = await Models.eventModel.findOne({
         _id: req.body.eventId,
       });
@@ -3430,28 +3397,44 @@ module.exports = {
             ? req.files.video
             : [req.files.video];
           for (const video of uploadedvideos) {
-            const videoNameUrl = await helper.fileUpload(video, "events");
-            videoName.push(videoNameUrl);
+            const videoName = video.name;
+            const videoPath = video.path;
+
+            // Upload video to S3
+            const videoUrl = await uploadFileToS3(videoPath, videoName);
+            videoUrls.push(videoUrl);
+
+            // Generate thumbnail and upload to S3
+            const thumbnailName = `${videoName}-thumbnail.jpg`;
             await new Promise((resolve, reject) => {
-              ffmpeg(`${process.cwd()}/public/images/events/${videoNameUrl}`)
+              ffmpeg(videoPath)
                 .screenshots({
                   timestamps: ["05%"],
-                  filename: `${videoNameUrl}thumbnail.jpg`,
-                  folder: `${process.cwd()}/public/images/events/`,
+                  filename: thumbnailName,
+                  folder: "/tmp/", // Use temp folder to generate the thumbnail locally
                   size: "320x240",
                 })
-                .on("end", () => {
+                .on("end", async () => {
+                  const thumbnailPath = `/tmp/${thumbnailName}`;
+                  const thumbnailUrl = await uploadFileToS3(
+                    thumbnailPath,
+                    thumbnailName,
+                  );
+                  thumbnailUrls.push(thumbnailUrl);
+                  fs.unlinkSync(thumbnailPath); // Clean up the local thumbnail
                   resolve();
                 })
                 .on("error", (err) => {
                   console.error(
-                    `Error generating thumbnail for ${videoNameUrl}:`,
+                    `Error generating thumbnail for ${videoName}:`,
                     err,
                   );
                   reject(err);
                 });
             });
-            thumbnail.push(`${videoNameUrl}thumbnail.jpg`);
+
+            // Clean up the local video file
+            fs.unlinkSync(videoPath);
           }
         }
 
@@ -3461,11 +3444,19 @@ module.exports = {
             : [req.files.images];
 
           for (const image of uploadedImages) {
-            const imageName = await helper.fileUpload(image, "events");
-            imageUrls.push(imageName);
+            const imageName = image.name;
+            const imagePath = image.path;
+
+            // Upload image to S3
+            const imageUrl = await uploadFileToS3(imagePath, imageName);
+            imageUrls.push(imageUrl);
+
+            // Clean up the local image file
+            fs.unlinkSync(imagePath);
           }
         }
-        //Find already images and video upload by user in same event then update other wise create
+
+        // Rest of the code remains the same, except you now work with URLs from S3
         let result;
         let checkPermission = {
           _id: req.body.eventId,
@@ -3483,18 +3474,17 @@ module.exports = {
           };
           let objToUpdate = {
             images: imageUrls,
-            video: videoName,
-            thumbnailVideo: thumbnail,
+            video: videoUrls,
+            thumbnailVideo: thumbnailUrls,
           };
           if (findBeforeAdd.length > 0) {
-            // result=await Models.EventPhotoVideosModel.updateOne(criteria,objToUpdate)
             result = await Models.EventPhotoVideosModel.updateOne(
               { eventId: req.body.eventId, userId: req.user._id },
               {
                 $addToSet: {
                   images: { $each: imageUrls },
-                  video: { $each: videoName },
-                  thumbnailVideo: { $each: thumbnail },
+                  video: { $each: videoUrls },
+                  thumbnailVideo: { $each: thumbnailUrls },
                 },
               },
             );
